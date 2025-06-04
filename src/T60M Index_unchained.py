@@ -20,7 +20,7 @@
 # init_notebook_mode(all_interactive=True)
 #
 # year = 2024
-# quarter = 2
+# quarter = 1
 # flow = 'import'
 #
 # -
@@ -58,6 +58,24 @@ price_impute
 prices = pd.merge(price_impute, baseprice, on=['flow', 'comno'], how='left', indicator=True)
 display(pd.crosstab(prices['_merge'], columns='Frequency', margins=True))
 prices.drop(columns='_merge', inplace=True)
+
+prices
+
+# ### Extra check of price change in chaining period
+
+check = (prices['price_rel'] > 1.40) | (prices['price_rel'] < 0.6)
+selected_columns = ['comno', 'sitc1', 'HS_sum', 'price_rel']
+outliers = prices[check][selected_columns]
+
+
+if quarter == 1:
+    print('Extra check before establishing chaining for new short indices')
+    print('Do an extra check for these commodities before they are accepted as good unit values. Compare data between baseperiod and current period.')
+    print('Focus on important commodities')
+    display(outliers)
+else:
+    print()
+
 
 # ## Calculate unchained index and index weight for commodities
 
