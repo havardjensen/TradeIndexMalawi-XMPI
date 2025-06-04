@@ -151,7 +151,7 @@ max_by_min=10
 max_by_median=5
 median_by_min=5
 share_small=0.0001
-n_transactions_year = 2
+n_transactions_year = 10
 exec(open("A20M CreateWeightBase.py").read())
 basedata
 
@@ -159,5 +159,7 @@ basedata
 
 exec(open("A30M Base_price.py").read())
 baseprice
+
+
 
 

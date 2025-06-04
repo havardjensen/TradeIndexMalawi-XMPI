@@ -18,7 +18,7 @@
 #
 # year = 2024
 # quarter = 1
-# flow = 'export'
+# flow = 'import'
 # selected_outlier= 'outlier_sd'
 #
 # import itables
@@ -162,6 +162,8 @@ tradedata_month['price_sd'] = tradedata_month.groupby(['flow', 'comno'])['price'
 tradedata_month['n_transactions_year'] = tradedata_month.groupby(['flow', 'comno'])['n_transactions_month'].transform('sum')
 tradedata_month['price_cv'] = tradedata_month['price_sd'] / tradedata_month['price_mean']
 
+tradedata_month
+
 # ## Save as parquet file
 
 tradedata_month.to_parquet(f'../data/{flow}_{year}.parquet')
@@ -169,7 +171,6 @@ print(f'\nNOTE: Parquet file ../data/{flow}_{year}.parquet written with {tradeda
 
 # #### Visualizing data
 
-# + active=""
 # markdown_text = """
 # ### Price Coefficient of Variation (price_cv)
 #
@@ -189,201 +190,321 @@ print(f'\nNOTE: Parquet file ../data/{flow}_{year}.parquet written with {tradeda
 # print(f'\n{flow.capitalize()} {year}.\n{markdown_text}')
 
 # +
-print('')
-print('')
-print(f'Scatter plot for price cv and number of transactions for {flow} in {year}')
-print('')
-print('')
-
-
-
-# Helper function to calculate price_mean, price_sd, and price_cv within each dataset
-def calculate_price_cv(df):
-    df['price_mean'] = df.groupby(['flow', 'comno'])['price'].transform('mean')
-    df['price_sd'] = df.groupby(['flow', 'comno'])['price'].transform('std')
-    df['price_cv'] = (df['price_sd'] / df['price_mean']).fillna(0)  # Handle NaNs by filling with 0
-    return df
-
-# Function to aggregate data after calculating price_cv
-def aggregate_and_calculate_price(df):
-    #df['qrt'] = 1  # Assign a constant quarter value for simplicity
-    
-    aggregated_df = df.groupby(['year', 'flow', 'comno'], as_index=False).agg(
-        value=('value', 'sum'),
-        weight=('weight', 'sum'),
-        n_transactions=('n_transactions', 'first')  # Assuming n_transactions does not vary
-    )
-    
-    aggregated_df['price'] = aggregated_df['value'] / aggregated_df['weight']
-    return aggregated_df[['comno', 'price', 'n_transactions']]
-
-# List of datasets to process
-datasets = [tradedata_with_outlier, tradedata_no_MAD, tradedata_no_sd, tradedata_no_sd2]
-dataset_names = ['With outliers', 'outlier_MAD removed', 'outlier_sd removed', 'outlier_sd2 removed']
-
-consolidated_data = pd.DataFrame()
-for i, dataset in enumerate(datasets):
-    dataset = calculate_price_cv(dataset)
-    aggregated_data = aggregate_and_calculate_price(dataset)
-    
-    # Merge the aggregated data with the calculated price_cv from the original dataset
-    aggregated_data = aggregated_data.merge(
-        dataset[['comno', 'price_cv']].drop_duplicates(), on='comno', how='left'
-    )
-    
-    aggregated_data['Dataset'] = dataset_names[i]
-    consolidated_data = pd.concat([consolidated_data, aggregated_data], ignore_index=True)
-
-# Pivot the consolidated data
-price_comparison = consolidated_data.pivot_table(
-    index='comno', 
-    columns='Dataset', 
-    values=['price', 'price_cv'],
-    aggfunc='first'  # Ensures we only keep one instance of the value
-)
-
-# Flatten the MultiIndex columns for clarity
-price_comparison.columns = [f'{col[0]}_{col[1]}' for col in price_comparison.columns]
-
-# Aggregate base_price and n_transactions separately, keeping just one instance of each
-base_data = consolidated_data[['comno', 'n_transactions']].drop_duplicates()
-
-# Merge base data to include base_price and n_transactions in the comparison
-price_comparison = price_comparison.merge(base_data, on='comno', how='left')
-
-# Create a function to plot price_cv
-def plot_price_cv(dataset_name):
-    # Filter for the selected dataset
-    data_to_plot = consolidated_data[consolidated_data['Dataset'] == dataset_name]
-    
-    # Count number of comnos with price_cv > 0.5
-    number_of_prices = data_to_plot['price'].dropna().count()  # Count of non-NaN prices
-    count_high_cv = (data_to_plot['price_cv'] < 0.5).sum()
-
-    plt.figure(figsize=(12, 6))
-    sns.scatterplot(data=data_to_plot, x='n_transactions', y='price_cv', color='blue', label='Price CV')
-    
-    # Set plot title and include the count of comnos with price_cv > 0.5
-    plt.title(f'{flow.capitalize()} {year}. Price Coefficient of Variation (Count of comnos with CV < 0.5: {count_high_cv} of {number_of_prices})')
-    plt.xlabel('n_transactions')
-    plt.ylabel('Price CV')
-    plt.xticks(rotation=45)
-    plt.grid()
-    plt.legend()
-    plt.tight_layout()
-    plt.show()
-
-# Create a dropdown for dataset selection
-dataset_dropdown = widgets.Dropdown(
-    options=dataset_names,
-    value=dataset_names[0],  # Default dataset
-    description='Select dataset:',
-    layout=widgets.Layout(width='300px')
-)
-
-# Create an interactive output for the plot
-output = widgets.interactive_output(plot_price_cv, {'dataset_name': dataset_dropdown})
-
-# Display the dropdown and output
-display(dataset_dropdown, output)
-
-# +
+import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
+import matplotlib.lines as mlines
+import matplotlib.patches as mpatches
 import ipywidgets as widgets
 from IPython.display import display, clear_output
 
-# --- Setup ---
-comno_counts = tradedata_no_sd['comno'].value_counts()
-valid_comno_values = sorted(comno_counts[comno_counts > 1].index.tolist())
-unique_quarters = sorted(tradedata_no_sd['quarter'].dropna().unique().tolist())
 
-# --- Widgets ---
-comno_combobox = widgets.Combobox(
-    placeholder='Type or select HS code',
-    options=valid_comno_values,
-    value=valid_comno_values[0],
-    description='Select HS:',
-    ensure_option=True,
-    layout=widgets.Layout(width='300px')
-)
-
-dataset_dropdown = widgets.Dropdown(
-    options=[('With outliers', 'tradedata_with_outlier'), ('Without outliers', 'tradedata')],
-    value='tradedata_with_outlier',
-    description='Dataset:',
-    layout=widgets.Layout(width='300px')
-)
-
-# Only first quarter selected
-quarter_checkboxes = [
-    widgets.Checkbox(value=(i == 0), description=str(q), indent=False)
-    for i, q in enumerate(unique_quarters)
-]
-quarter_box = widgets.VBox(quarter_checkboxes)
-
-def get_selected_quarters():
-    return [int(cb.description) for cb in quarter_checkboxes if cb.value]
-
-# --- Output area ---
-plot_output = widgets.Output()
-
-# --- Plotting ---
-def plot_price_distribution(ax, dataset, comno_value, hue, selected_quarters):
-    filtered_data = dataset[
-        (dataset['comno'] == comno_value) &
-        (dataset['quarter'].isin(selected_quarters))
+def combined_price_ui(tradedata_with_outlier, tradedata, tradedata_month):
+    # Shared HS code selector based on intersection of all datasets' comno
+    comno_sets = [
+        set(tradedata_with_outlier['comno'].dropna().unique()),
+        set(tradedata['comno'].dropna().unique()),
+        set(tradedata_month['comno'].dropna().unique())
     ]
-
-    if filtered_data.empty:
-        ax.text(0.5, 0.5, 'No data for selected filters', ha='center', va='center', fontsize=14)
-        ax.set_axis_off()
-        return
-
-    if hue in filtered_data.columns:
-        sns.histplot(data=filtered_data, x='price', hue=hue, kde=True, palette='muted', bins=30, alpha=0.7, ax=ax)
-    else:
-        sns.histplot(data=filtered_data, x='price', kde=True, bins=30, alpha=0.7, ax=ax)
-
-    ax.set_title(f'HS {comno_value} | Quarters: {", ".join(map(str, selected_quarters))}')
-    ax.set_xlabel('Price')
-    ax.set_ylabel('Frequency')
-
-# --- Update function (triggered by button) ---
-def update_price_distribution(_):
-    with plot_output:
-        clear_output(wait=True)
-
-        dataset_name = dataset_dropdown.value
-        comno_value = comno_combobox.value
-        selected_quarters = get_selected_quarters()
-
-        if not comno_value or not selected_quarters:
-            print("Please select both a HS code and at least one quarter.")
+    comno_values = sorted(set.intersection(*comno_sets))
+    
+    # Widgets
+    comno_combobox = widgets.Combobox(
+        placeholder='Type or select HS code',
+        options=comno_values,
+        value=comno_values[0] if comno_values else None,
+        description='HS code:',
+        ensure_option=True,
+        layout=widgets.Layout(width='300px')
+    )
+    
+    dataset_dropdown = widgets.Dropdown(
+        options=[('With outliers', 'tradedata_with_outlier'), ('Without outliers', 'tradedata')],
+        value='tradedata_with_outlier',
+        description='Dataset:',
+        layout=widgets.Layout(width='200px')
+    )
+    
+    unique_quarters = sorted(tradedata['quarter'].dropna().unique().tolist())
+    quarter_checkboxes = [widgets.Checkbox(value=(i == 0), description=str(q), indent=False) for i, q in enumerate(unique_quarters)]
+    quarter_box = widgets.VBox(quarter_checkboxes)
+    
+    right_axis_dropdown = widgets.Dropdown(
+        options=[('None', 'none'), ('Value', 'value'), ('Weight', 'weight'), ('Both', 'both')],
+        value='none',
+        description='Show:',
+        layout=widgets.Layout(width='200px')
+    )
+    
+    plot_output = widgets.Output()
+    
+    def get_selected_quarters():
+        return [int(cb.description) for cb in quarter_checkboxes if cb.value]
+    
+    def plot_price_distribution(ax, dataset, comno_value, selected_quarters):
+        filtered_data = dataset[
+            (dataset['comno'] == comno_value) &
+            (dataset['quarter'].isin(selected_quarters))
+        ]
+        if filtered_data.empty:
+            ax.text(0.5, 0.5, 'No data for selected filters', ha='center', va='center', fontsize=14)
+            ax.set_axis_off()
             return
 
-        dataset = {
-            'tradedata_with_outlier': tradedata_with_outlier,
-            'tradedata': tradedata
-        }[dataset_name]
+        if 'outlier_sd' in filtered_data.columns:
+            filtered_data = filtered_data.copy()
+            filtered_data['outlier_label'] = filtered_data['outlier_sd'].apply(
+                lambda x: 'Outlier' if x else 'No Outlier'
+            )
+            counts = filtered_data['outlier_label'].value_counts()
+            enable_kde = counts.min() >= 2  # KDE only if all groups have at least 2 points
 
-        fig, ax = plt.subplots(figsize=(8, 6))
-        plot_price_distribution(ax, dataset, comno_value, selected_outlier, selected_quarters)
-        plt.tight_layout()
-        plt.show()
+            sns.histplot(
+                data=filtered_data,
+                x='price',
+                hue='outlier_label',
+                kde=enable_kde,
+                bins=30,
+                alpha=0.7,
+                ax=ax,
+                multiple='stack'
+            )
 
-# --- Button ---
-update_button = widgets.Button(description="Update Plot", button_style='primary', icon='refresh')
-update_button.on_click(update_price_distribution)
+            # Manually create legend handles with fixed colors for clarity
+            hue_order = ['No Outlier', 'Outlier']
+            colors = ['tab:blue', 'tab:orange']
+            handles = [mpatches.Patch(color=colors[i], label=hue_order[i]) for i in range(len(hue_order))]
+            ax.legend(title='Outlier Status', handles=handles)
 
-# --- Layout ---
-display(
-    widgets.HBox([comno_combobox, dataset_dropdown]),
-    widgets.Label("Select Quarters:"),
-    quarter_box,
-    update_button,
-    plot_output
-)
+        else:
+            sns.histplot(
+                data=filtered_data,
+                x='price',
+                kde=True,
+                bins=30,
+                alpha=0.7,
+                ax=ax
+            )
+
+        ax.set_title(f'HS {comno_value} | Quarters: {", ".join(map(str, selected_quarters))}')
+        ax.set_xlabel('Price')
+        ax.set_ylabel('Frequency')
+    
+    def plot_line(ax_left, dataset, comno, right_selection):
+        filtered = dataset[dataset['comno'] == comno]
+        if filtered.empty:
+            ax_left.text(0.5, 0.5, 'No data for selected HS code', ha='center', va='center')
+            ax_left.set_axis_off()
+            return
+        filtered = filtered.sort_values('date')
+
+        sns.lineplot(data=filtered, x='date', y='price', color='tab:blue', marker='o', ax=ax_left, label='Price')
+        ax_left.set_ylabel('Price', color='tab:blue')
+        ax_left.tick_params(axis='y', labelcolor='tab:blue')
+        ax_left.set_xlabel('Date')
+        ax_left.set_title(f'HS {comno} — Price vs. Value & Weight')
+        ax_left.grid(True)
+
+        legend_handles = [mlines.Line2D([], [], color='tab:blue', marker='o', label='Price')]
+
+        if right_selection != 'none':
+            ax_right = ax_left.twinx()
+            if right_selection in ['value', 'both']:
+                sns.lineplot(data=filtered, x='date', y='value',
+                             color='gray', linestyle='--', marker='s', ax=ax_right)
+                legend_handles.append(mlines.Line2D([], [], color='gray', linestyle='--', marker='s', label='Value'))
+
+            if right_selection in ['weight', 'both']:
+                sns.lineplot(data=filtered, x='date', y='weight',
+                             color='darkgray', linestyle=':', marker='^', ax=ax_right)
+                legend_handles.append(mlines.Line2D([], [], color='darkgray', linestyle=':', marker='^', label='Weight'))
+
+            ax_right.set_ylabel('Value / Weight', color='gray')
+            ax_right.tick_params(axis='y', labelcolor='gray')
+
+        # Stats box
+        latest = filtered.iloc[-1]
+        stats_text = (
+            f"Months: {latest.get('no_of_months', '')}\n"
+            f"Max: {latest.get('price_max', 0):,.2f}\n"
+            f"Min: {latest.get('price_min', 0):,.2f}\n"
+            f"Median: {latest.get('price_median', 0):,.2f}\n"
+            f"Mean: {latest.get('price_mean', 0):,.2f}\n"
+            f"SD: {latest.get('price_sd', 0):,.2f}\n"
+            f"Transactions: {latest.get('n_transactions_year', '')}\n"
+            f"CV: {latest.get('price_cv', 0):,.2f}"
+        )
+        ax_left.text(
+            0.98, 0.95, stats_text,
+            transform=ax_left.transAxes,
+            fontsize=9,
+            verticalalignment='top',
+            horizontalalignment='right',
+            bbox=dict(facecolor='white', edgecolor='gray', boxstyle='round,pad=0.3')
+        )
+        ax_left.legend(handles=legend_handles, loc='upper left')
+    
+    def update_plot(_):
+        with plot_output:
+            clear_output(wait=True)
+            comno = comno_combobox.value
+            dataset_name = dataset_dropdown.value
+            selected_quarters = get_selected_quarters()
+            right_selection = right_axis_dropdown.value
+            
+            if not comno:
+                print("Please select a valid HS code.")
+                return
+            if not selected_quarters:
+                print("Please select at least one quarter.")
+                return
+            
+            dataset_dist = {
+                'tradedata_with_outlier': tradedata_with_outlier,
+                'tradedata': tradedata
+            }[dataset_name]
+            
+            monthly_data = tradedata_month.copy()
+            for col in ['month', 'year', 'value', 'weight', 'price']:
+                monthly_data[col] = pd.to_numeric(monthly_data[col], errors='coerce')
+            monthly_data['date'] = pd.to_datetime(monthly_data[['year', 'month']].assign(day=1), errors='coerce')
+            monthly_data = monthly_data.dropna(subset=['date'])
+            
+            fig, axes = plt.subplots(2, 1, figsize=(10, 12))
+            
+            plot_price_distribution(axes[0], dataset_dist, comno, selected_quarters)
+            plot_line(axes[1], monthly_data, comno, right_selection)
+            
+            plt.tight_layout()
+            plt.show()
+    
+    update_button = widgets.Button(description="Update Plot", button_style='primary', icon='refresh')
+    update_button.on_click(update_plot)
+    
+    display(
+        widgets.HBox([comno_combobox, dataset_dropdown, right_axis_dropdown]),
+        widgets.Label("Select Quarters:"),
+        quarter_box,
+        update_button,
+        plot_output
+    )
+
+
+
+# +
+import pandas as pd
+import plotly.express as px
+import ipywidgets as widgets
+from IPython.display import display
+
+def price_cv_ui(datasets, dataset_names, flow, year):
+    """
+    Interactive visualization of Price Coefficient of Variation (CV)
+    with selectable X-axis (transactions or value).
+    """
+
+    def aggregate_to_monthly(df):
+        df_month = df.groupby(['year', 'flow', 'comno', 'quarter', 'month'], as_index=False).agg(
+            weight=('weight', 'sum'),
+            value=('value', 'sum'),
+            n_transactions_month=('comno', 'size')
+        )
+        df_month['price'] = df_month['value'] / df_month['weight']
+        return df_month
+
+    def calculate_price_cv_monthly(df_month):
+        df_month['price_mean'] = df_month.groupby(['flow', 'comno'])['price'].transform('mean')
+        df_month['price_sd'] = df_month.groupby(['flow', 'comno'])['price'].transform('std')
+        df_month['price_cv'] = (df_month['price_sd'] / df_month['price_mean']).fillna(0)
+        df_month['n_transactions_year'] = df_month.groupby(['flow', 'comno'])['n_transactions_month'].transform('sum')
+        return df_month
+
+    def aggregate_final(df_month):
+        return df_month.groupby(['flow', 'year', 'comno'], as_index=False).agg(
+            price=('price', 'mean'),
+            value=('value', 'sum'),
+            n_transactions_year=('n_transactions_year', 'first'),
+            price_cv=('price_cv', 'first')
+        )[['comno', 'price', 'value', 'n_transactions_year', 'price_cv']]
+
+    consolidated = pd.DataFrame()
+    for i, dataset in enumerate(datasets):
+        df_month = aggregate_to_monthly(dataset)
+        df_month = calculate_price_cv_monthly(df_month)
+        final_df = aggregate_final(df_month)
+        final_df['Dataset'] = dataset_names[i]
+        consolidated = pd.concat([consolidated, final_df], ignore_index=True)
+
+    def plot_dynamic_xaxis(dataset_name, x_variable):
+        data = consolidated[consolidated['Dataset'] == dataset_name]
+        total = data['price'].notna().sum()
+        below_cv = (data['price_cv'] < 0.5).sum()
+
+        x_labels = {
+            'n_transactions_year': 'Number of Transactions (Year)',
+            'value': 'Total Value'
+        }
+
+        title = f"{flow.capitalize()} {year} — Price CV (CV < 0.5: {below_cv} of {total})"
+
+        fig = px.scatter(
+            data,
+            x=x_variable,
+            y='price_cv',
+            hover_data={'comno': True, 'price_cv': ':.3f', x_variable: ':.0f'},
+            labels={
+                x_variable: x_labels[x_variable],
+                'price_cv': 'Price CV'
+            },
+            title=title
+        )
+        fig.update_traces(marker=dict(size=7, color='blue', opacity=0.7, line=dict(width=0.5, color='black')))
+        fig.update_layout(height=600, title_font_size=18, template='plotly_white')
+        fig.show()
+
+    # UI widgets
+    dataset_dropdown = widgets.Dropdown(
+        options=dataset_names,
+        value=dataset_names[0],
+        description='Dataset:',
+        layout=widgets.Layout(width='300px')
+    )
+
+    x_axis_dropdown = widgets.Dropdown(
+        options=[
+            ('Number of Transactions', 'n_transactions_year'),
+            ('Total Value', 'value')
+        ],
+        value='n_transactions_year',
+        description='X-axis:',
+        layout=widgets.Layout(width='300px')
+    )
+
+    output = widgets.interactive_output(
+        plot_dynamic_xaxis,
+        {'dataset_name': dataset_dropdown, 'x_variable': x_axis_dropdown}
+    )
+
+    display(widgets.HBox([dataset_dropdown, x_axis_dropdown]), output)
+
+
+
+# +
+
+# 1. Histogram Plot UI
+#price_distribution_ui(tradedata_no_sd, tradedata_with_outlier)
+
+# 2. Lineplot UI
+#price_lineplot_ui(tradedata_month)
+
+combined_price_ui(tradedata_with_outlier, tradedata, tradedata_month)
+
+# 3. Price CV Plot UI
+#flow = 'import'
+#year = 2024
+datasets = [tradedata_with_outlier, tradedata_no_sd, tradedata_no_sd2]  # as example
+dataset_names = ['With outliers', 'outlier_sd removed', 'outlier_sd2 removed']
+price_cv_ui(datasets, dataset_names, flow, year)
 
 
 # +
@@ -451,5 +572,7 @@ plt.title(f"Pie chart of weightbase for SITC1 for {flow} in {year}", fontsize=14
 
 plt.show()
 # -
+
+
 
 

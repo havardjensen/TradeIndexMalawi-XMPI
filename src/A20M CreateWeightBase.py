@@ -13,7 +13,7 @@
 # #pd.set_option('display.float_format',  '{:18,.0}'.format)
 # pd.set_option('display.float_format', lambda x: f'{x:15,.0f}' if abs(x)>1e5 else f'{x:15.2f}')
 #
-# year = 2021
+# year = 2024
 # quarter = 1
 # flow = 'import'
 #
